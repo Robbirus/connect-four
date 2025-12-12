@@ -20,7 +20,10 @@ class GameController:
 
         while not self.game_over:
             for event in pygame.event.get():
-                self.handle_event(event)
+                if self.handle_event(event):
+                    # If a move was made, ignore other events in this batch
+                    # to prevent buffered clicks from triggering multiple moves
+                    break
 
         if self.game_over:
             self.ui.wait_for_click()
@@ -33,33 +36,52 @@ class GameController:
             self.handle_mouse_motion(event)
 
         if event.type == pygame.MOUSEBUTTONDOWN:
-            self.handle_mouse_click(event)
+            return self.handle_mouse_click(event)
+
+        return False
 
     def handle_mouse_motion(self, event):
         pygame.draw.rect(
             self.ui.screen,
             (0, 0, 0),
-            (0, 0, self.ui.screen.get_width(), CTS.SQUARESIZE))
+            (0, 0, self.ui.screen.get_width(), CTS.SQUARESIZE)
+        )
+
         posx = event.pos[0]
-        self.ui.draw_hover_piece(posx, self.turn)
+        col = int(math.floor(posx / CTS.SQUARESIZE))
+        col = max(0, min(col, CTS.COLUMN_COUNT - 1))
+        snapped_x = int(col * CTS.SQUARESIZE + CTS.SQUARESIZE / 2)
+
+        self.ui.draw_hover_piece(snapped_x, self.turn)
 
     def handle_mouse_click(self, event):
         pygame.draw.rect(
             self.ui.screen,
             (0, 0, 0),
-            (0, 0, self.ui.screen.get_width(), CTS.SQUARESIZE))
+            (0, 0, self.ui.screen.get_width(), CTS.SQUARESIZE)
+        )
 
         posx = event.pos[0]
         col = int(math.floor(posx / CTS.SQUARESIZE))
 
         if self.board.is_valid_location(col):
             self.process_move(col)
+
             # Update hover piece after move if game continues
             if not self.game_over:
-                self.ui.draw_hover_piece(posx, self.turn)
+                # Recalculate snapped position for the new turn
+                col = int(math.floor(posx / CTS.SQUARESIZE))
+                col = max(0, min(col, CTS.COLUMN_COUNT - 1))
+                snapped_x = int(col * CTS.SQUARESIZE + CTS.SQUARESIZE / 2)
+                self.ui.draw_hover_piece(snapped_x, self.turn)
+
+            return True
+
+        return False
 
     def process_move(self, col):
         row = self.board.get_next_open_row(col)
+        self.ui.animate_drop(self.board, row, col, self.turn)
         self.board.drop_piece(row, col, self.turn)
 
         if self.board.winning_move(self.turn):
