@@ -7,8 +7,13 @@ from . import constants as CTS
 
 
 class Connect4UI:
+    """
+    Handles the graphical user interface for the Connect 4 game using Pygame.
+    Responsible for drawing the board, pieces, and animations.
+    """
 
     def __init__(self):
+        """Initialize Pygame, the window, font, and the board overlay."""
         pygame.init()
         self.screen = pygame.display.set_mode(CTS.SIZE)
         pygame.display.set_caption("Connect Four")
@@ -16,6 +21,11 @@ class Connect4UI:
         self.board_overlay = self._create_board_overlay()
 
     def _create_board_overlay(self):
+        """
+        Create a surface representing the blue board with transparent holes.
+        Returns:
+            pygame.Surface: The board overlay surface.
+        """
         overlay = pygame.Surface(CTS.SIZE)
         overlay.fill(CTS.BLACK)
 
@@ -27,6 +37,7 @@ class Connect4UI:
         # Draw transparent holes
         for c in range(CTS.COLUMN_COUNT):
             for r in range(CTS.ROW_COUNT):
+
                 pygame.draw.circle(
                     overlay,
                     CTS.BLACK,
@@ -39,15 +50,21 @@ class Connect4UI:
         return overlay
 
     def draw_board(self, board):
+        """
+        Draw the complete game state: background, pieces, and board overlay.
+        """
         self.screen.fill(CTS.BLACK)
         self.draw_pieces(board)
         self.screen.blit(self.board_overlay, (0, 0))
         pygame.display.update()
 
     def draw_pieces(self, board):
+        """Draw all placed pieces on the screen."""
         grid = board.get_board()
+
         for c in range(CTS.COLUMN_COUNT):
             for r in range(CTS.ROW_COUNT):
+
                 if grid[r][c] == CTS.PLAYER_1:
                     pygame.draw.circle(
                         self.screen,
@@ -56,6 +73,7 @@ class Connect4UI:
                          CTS.HEIGHT -
                          int(r * CTS.SQUARESIZE + CTS.SQUARESIZE / 2)),
                         CTS.RADIUS)
+
                 elif grid[r][c] == CTS.PLAYER_2:
                     pygame.draw.circle(
                         self.screen,
@@ -66,6 +84,10 @@ class Connect4UI:
                         CTS.RADIUS)
 
     def animate_drop(self, board, row, col, piece):
+        """
+        Animate a piece dropping into a slot with a bounce effect.
+        Blocks execution until animation completes.
+        """
         target_y = CTS.HEIGHT - int(row * CTS.SQUARESIZE + CTS.SQUARESIZE / 2)
         x_pos = int(col * CTS.SQUARESIZE + CTS.SQUARESIZE / 2)
         y_pos = int(CTS.SQUARESIZE / 2)
@@ -86,7 +108,9 @@ class Connect4UI:
                 if abs(speed) < 5:
                     break
 
+            # Handle events to allow quitting during animation
             for event in pygame.event.get():
+
                 if event.type == pygame.QUIT:
                     pygame.quit()
                     sys.exit()
@@ -104,6 +128,7 @@ class Connect4UI:
             clock.tick(60)
 
     def draw_hover_piece(self, x_pos, turn):
+        """Draw the hovering piece at the top of the screen."""
         # Clear the top row area
         pygame.draw.rect(self.screen, CTS.BLACK,
                          (0, 0, CTS.SIZE[0], CTS.SQUARESIZE))
@@ -111,9 +136,11 @@ class Connect4UI:
         color = CTS.RED if turn == CTS.PLAYER_1 else CTS.YELLOW
         pygame.draw.circle(self.screen, color,
                            (x_pos, int(CTS.SQUARESIZE / 2)), CTS.RADIUS)
+
         pygame.display.update()
 
     def show_message(self, message, color=CTS.RED):
+        """Display a text message at the top of the screen."""
         label = self.font.render(message, 1, color)
         # Center the message
         text_rect = label.get_rect(
@@ -126,13 +153,17 @@ class Connect4UI:
         pygame.display.update()
 
     def wait_for_click(self):
+        """Wait indefinitely for a mouse click or quit event."""
         while True:
             for event in pygame.event.get():
+
                 if event.type == pygame.QUIT:
                     pygame.quit()
                     sys.exit()
+
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     return
 
     def quit(self):
+        """Quit Pygame."""
         pygame.quit()

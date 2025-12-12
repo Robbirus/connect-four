@@ -1,3 +1,8 @@
+"""
+Constants for the Connect 4 game UI.
+Includes colors, dimensions, and re-exports game logic constants.
+"""
+
 from connect4_core.config import (
     ROW_COUNT, COLUMN_COUNT, PLAYER_1, PLAYER_2, EMPTY
 )
