@@ -34,40 +34,40 @@ class Board:
     def check_horizontal(self, piece):
         for c in range(self.cols - 3):
             for r in range(self.rows):
-                if self.grid[r][c] == piece \
-                        and self.grid[r][c + 1] == piece \
-                        and self.grid[r][c + 2] == piece \
-                        and self.grid[r][c + 3] == piece:
+                if (self.grid[r][c] == piece and
+                        self.grid[r][c + 1] == piece and
+                        self.grid[r][c + 2] == piece and
+                        self.grid[r][c + 3] == piece):
                     return True
         return False
 
     def check_vertical(self, piece):
         for c in range(self.cols):
             for r in range(self.rows - 3):
-                if self.grid[r][c] == piece \
-                        and self.grid[r + 1][c] == piece \
-                        and self.grid[r + 2][c] == piece \
-                        and self.grid[r + 3][c] == piece:
+                if (self.grid[r][c] == piece and
+                        self.grid[r + 1][c] == piece and
+                        self.grid[r + 2][c] == piece and
+                        self.grid[r + 3][c] == piece):
                     return True
         return False
 
     def check_positive_diagonal(self, piece):
         for c in range(self.cols - 3):
             for r in range(self.rows - 3):
-                if self.grid[r][c] == piece \
-                        and self.grid[r + 1][c + 1] == piece \
-                        and self.grid[r + 2][c + 2] == piece \
-                        and self.grid[r + 3][c + 3] == piece:
+                if (self.grid[r][c] == piece and
+                        self.grid[r + 1][c + 1] == piece and
+                        self.grid[r + 2][c + 2] == piece and
+                        self.grid[r + 3][c + 3] == piece):
                     return True
         return False
 
     def check_negative_diagonal(self, piece):
         for c in range(self.cols - 3):
             for r in range(3, self.rows):
-                if self.grid[r][c] == piece \
-                        and self.grid[r - 1][c + 1] == piece \
-                        and self.grid[r - 2][c + 2] == piece \
-                        and self.grid[r - 3][c + 3] == piece:
+                if (self.grid[r][c] == piece and
+                        self.grid[r - 1][c + 1] == piece and
+                        self.grid[r - 2][c + 2] == piece and
+                        self.grid[r - 3][c + 3] == piece):
                     return True
         return False
 

@@ -1,4 +1,6 @@
-from connect4_core.config import ROW_COUNT, COLUMN_COUNT
+from connect4_core.config import (
+    ROW_COUNT, COLUMN_COUNT, PLAYER_1, PLAYER_2, EMPTY
+)
 
 # Colors
 BLUE = (0, 0, 255)
@@ -14,3 +16,9 @@ WIDTH = COLUMN_COUNT * SQUARESIZE
 HEIGHT = (ROW_COUNT + 1) * SQUARESIZE
 SIZE = (WIDTH, HEIGHT)
 RADIUS = int(SQUARESIZE / 2 - 5)
+
+__all__ = [
+    'ROW_COUNT', 'COLUMN_COUNT', 'PLAYER_1', 'PLAYER_2', 'EMPTY',
+    'BLUE', 'BLACK', 'RED', 'YELLOW', 'WHITE', 'GRAY',
+    'SQUARESIZE', 'WIDTH', 'HEIGHT', 'SIZE', 'RADIUS'
+]
