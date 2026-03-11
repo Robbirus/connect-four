@@ -8,6 +8,7 @@ import numpy as np
 from connect4_core.board import Board
 from .agent import Connect4Agent
 from .evaluator import compute_reward, analyze_move
+from .tracker import Tracker
 
 
 class SelfPlayTrainer:
@@ -18,15 +19,18 @@ class SelfPlayTrainer:
     and losing positions to improve its strategy.
     """
 
-    def __init__(self, model_path=None):
+    def __init__(self, model_path=None, db_path=None):
         """
         Initialize the trainer.
 
         Args:
             model_path: Path to load/save the model
+            db_path: Path to the SQLite database (default: games.db)
         """
         self.agent = Connect4Agent(model_path=model_path)
         self.model_path = model_path or "connect4_dqn.pth"
+        self.tracker = Tracker(db_path=db_path)
+        self.session_id = None
 
         # Statistics
         self.games_played = 0
@@ -35,6 +39,7 @@ class SelfPlayTrainer:
         self.draws = 0
         self.total_moves = 0
         self.losses = []
+        self.recent_rewards = []  # rewards over recent window
 
     def play_game(self, verbose=False):
         """
@@ -49,7 +54,11 @@ class SelfPlayTrainer:
         board = Board()
         current_player = 1
         move_count = 0
-        game_history = []  # Store (board_state, player, action)
+        game_history = []  # Store (board_state, player, action, move_meta)
+
+        # Track game in DB
+        game_id = self.tracker.start_game(
+            session_id=self.session_id, game_type="self_play")
 
         while True:
             # Get valid moves
@@ -58,24 +67,26 @@ class SelfPlayTrainer:
             if not valid_moves:
                 # Draw
                 self._process_game_end(
-                    game_history, winner=0, move_count=move_count)
+                    game_history, winner=0, move_count=move_count,
+                    game_id=game_id)
                 self.draws += 1
                 return 0
 
             # Store state before move
             state_before = np.copy(board.grid)
 
-            # Select move
-            action = self.agent.select_move(
+            # Select move (with Q-value metadata)
+            action, move_meta = self.agent.select_move_tracked(
                 board, current_player, valid_moves, training=True)
 
             # Make move
             row = board.get_next_open_row(action)
             board.drop_piece(row, action, current_player)
-            move_count += 1
 
             # Store in history
-            game_history.append((state_before, current_player, action))
+            game_history.append((state_before, current_player, action, move_meta))
+            move_count += 1
+            self.total_moves += 1
 
             if verbose:
                 print(f"\nPlayer {current_player} plays column {action}")
@@ -84,7 +95,8 @@ class SelfPlayTrainer:
             # Check for win
             if board.winning_move(current_player):
                 self._process_game_end(
-                    game_history, winner=current_player, move_count=move_count)
+                    game_history, winner=current_player,
+                    move_count=move_count, game_id=game_id)
                 if current_player == 1:
                     self.player1_wins += 1
                 else:
@@ -94,21 +106,21 @@ class SelfPlayTrainer:
             # Switch player
             current_player = 2 if current_player == 1 else 1
 
-    def _process_game_end(self, game_history, winner, move_count):
+    def _process_game_end(self, game_history, winner, move_count, game_id):
         """
-        Process end of game - assign rewards and train.
+        Process end of game - assign rewards, train, and record to DB.
 
         Args:
-            game_history: List of (state, player, action) tuples
+            game_history: List of (state, player, action, move_meta) tuples
             winner: Winner (1, 2, or 0 for draw)
             move_count: Total moves in game
+            game_id: Database game id
         """
         # Rebuild board states for analysis
         boards = [np.zeros((6, 7), dtype=int)]
         current_board = np.zeros((6, 7), dtype=int)
 
-        for state, player, action in game_history:
-            # Find row for this action
+        for state, player, action, _ in game_history:
             row = 0
             for r in range(6):
                 if current_board[r, action] == 0:
@@ -117,8 +129,11 @@ class SelfPlayTrainer:
             current_board[row, action] = player
             boards.append(current_board.copy())
 
+        reward_p1 = 0.0
+        reward_p2 = 0.0
+
         # Process each move and assign rewards
-        for i, (state, player, action) in enumerate(game_history):
+        for i, (state, player, action, move_meta) in enumerate(game_history):
             is_final_move = (i >= len(game_history) - 2)
             board_after = boards[i + 1]
 
@@ -134,13 +149,12 @@ class SelfPlayTrainer:
                     reward = compute_reward(
                         board_after, player, True, False, False, move_count)
                 else:
-                    # Intermediate reward with analysis
                     reward = compute_reward(
                         board_after, player, False, False, False, move_count,
                         blocked_win=move_analysis['blocked_win'],
                         created_trap=move_analysis['created_trap']
                     )
-                    reward += 0.03  # Small bonus for moves leading to win
+                    reward += 0.03
             else:
                 if is_final_move:
                     reward = compute_reward(
@@ -153,7 +167,22 @@ class SelfPlayTrainer:
                         blocked_win=move_analysis['blocked_win'],
                         missed_block=move_analysis['missed_block']
                     )
-                    reward -= 0.03  # Small penalty for moves leading to loss
+                    reward -= 0.03
+
+            # Accumulate rewards per player
+            if player == 1:
+                reward_p1 += reward
+            else:
+                reward_p2 += reward
+
+            # Record move to DB
+            self.tracker.record_move(
+                game_id, move_index=i, player_id=player, column=action,
+                reward=reward,
+                chosen_q_value=move_meta.get("chosen_q"),
+                best_q_value=move_meta.get("best_q"),
+                was_exploration=move_meta.get("was_exploration", False),
+            )
 
             # Get next state
             if i + 1 < len(game_history):
@@ -166,6 +195,13 @@ class SelfPlayTrainer:
             # Store experience
             self.agent.remember(state, action, reward,
                                 next_state, done, player)
+
+        # Finalize game in DB
+        self.tracker.end_game(
+            game_id, winner=winner, num_moves=move_count,
+            reward_p1=reward_p1, reward_p2=reward_p2)
+
+        self.recent_rewards.append((reward_p1 + reward_p2) / 2)
 
         # Train on batch
         loss = self.agent.replay()
@@ -185,15 +221,28 @@ class SelfPlayTrainer:
         print(f"Device: {self.agent.device}")
         print("-" * 50)
 
+        # Start tracking session
+        self.session_id = self.tracker.start_session(
+            hyperparameters={
+                "lr": self.agent.learning_rate,
+                "gamma": self.agent.gamma,
+                "batch_size": self.agent.batch_size,
+                "epsilon_start": self.agent.epsilon,
+                "epsilon_min": self.agent.epsilon_min,
+                "epsilon_decay": self.agent.epsilon_decay,
+            }
+        )
+
         start_time = time.time()
 
         for game_num in range(1, num_games + 1):
             self.play_game(verbose=False)
             self.games_played += 1
 
-            # Print statistics periodically
+            # Record snapshot + print stats periodically
             if game_num % verbose_every == 0:
                 self._print_stats(game_num, start_time)
+                self._record_snapshot(game_num)
 
             # Save model periodically
             if game_num % save_every == 0:
@@ -201,6 +250,7 @@ class SelfPlayTrainer:
 
         # Final save
         self.agent.save(self.model_path)
+        self.tracker.end_session(self.session_id, num_games=num_games)
         print("\nTraining complete!")
         self._print_stats(num_games, start_time)
 
@@ -220,6 +270,33 @@ class SelfPlayTrainer:
               f"P1: {p1_rate:5.1f}% | P2: {p2_rate:5.1f}% | Draw: {draw_rate:5.1f}% | "
               f"ε: {self.agent.epsilon:.3f} | Loss: {avg_loss:.4f} | "
               f"{games_per_sec:.1f} games/s")
+
+    def _record_snapshot(self, game_number):
+        """Record a training snapshot to the database."""
+        if self.session_id is None:
+            return
+
+        total = self.player1_wins + self.player2_wins + self.draws
+        avg_loss = float(np.mean(self.losses[-100:])) if self.losses else None
+        avg_reward = (
+            float(np.mean(self.recent_rewards[-100:]))
+            if self.recent_rewards else None
+        )
+        avg_moves = (
+            self.total_moves / total if total > 0 else None
+        )
+
+        self.tracker.record_snapshot(
+            self.session_id,
+            game_number=game_number,
+            epsilon=self.agent.epsilon,
+            avg_loss=avg_loss,
+            p1_win_rate=self.player1_wins / total if total > 0 else None,
+            p2_win_rate=self.player2_wins / total if total > 0 else None,
+            draw_rate=self.draws / total if total > 0 else None,
+            avg_moves_per_game=avg_moves,
+            avg_reward=avg_reward,
+        )
 
     def _print_board(self, board):
         """Print board state to console."""

@@ -114,27 +114,49 @@ class Connect4Agent:
         Returns:
             Selected column index
         """
+        action, _ = self.select_move_tracked(board, player, valid_moves, training)
+        return action
+
+    def select_move_tracked(self, board, player, valid_moves, training=True):
+        """
+        Select a move and return metadata for tracking.
+
+        Returns:
+            (action, meta) where meta is a dict with chosen_q, best_q, was_exploration
+        """
         if not valid_moves:
-            return None
+            return None, {}
 
         # Epsilon-greedy exploration during training
-        if training and random.random() < self.epsilon:
-            return random.choice(valid_moves)
+        was_exploration = training and random.random() < self.epsilon
 
-        # Use network to select best move
+        # Always compute Q-values for tracking
         state_tensor = self.board_to_tensor(board, player)
-
         with torch.no_grad():
             self.policy_net.eval()
             q_values = self.policy_net(state_tensor)
-
-            # Mask invalid moves
             q_values_np = q_values.cpu().numpy()[0]
+
             masked_q = np.full(7, float('-inf'))
             for col in valid_moves:
                 masked_q[col] = q_values_np[col]
 
-            return int(np.argmax(masked_q))
+            best_action = int(np.argmax(masked_q))
+            best_q = float(masked_q[best_action])
+
+        if was_exploration:
+            action = random.choice(valid_moves)
+        else:
+            action = best_action
+
+        chosen_q = float(q_values_np[action])
+
+        meta = {
+            "chosen_q": chosen_q,
+            "best_q": best_q,
+            "was_exploration": was_exploration,
+        }
+        return action, meta
 
     def remember(self, state, action, reward, next_state, done, player):
         """
