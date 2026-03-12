@@ -4,6 +4,7 @@ Trains the agent by playing games against itself.
 """
 
 import time
+import os
 import numpy as np
 from connect4_core.board import Board
 from .agent import Connect4Agent
@@ -230,6 +231,8 @@ class SelfPlayTrainer:
                 "epsilon_start": self.agent.epsilon,
                 "epsilon_min": self.agent.epsilon_min,
                 "epsilon_decay": self.agent.epsilon_decay,
+                "seed": os.environ["PYTHONHASHSEED"],
+                "seed_mode": "best-effort"
             }
         )
 

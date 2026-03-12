@@ -10,7 +10,7 @@ Example:
 
 import argparse
 from connect4_ai.trainer import SelfPlayTrainer
-
+from utils.seed import seed_everything
 
 def main():
     parser = argparse.ArgumentParser(description='Train Connect 4 AI')
@@ -22,8 +22,13 @@ def main():
                         help='Save model every N games (default: 1000)')
     parser.add_argument('--verbose-every', type=int, default=100,
                         help='Print stats every N games (default: 100)')
+    parser.add_argument('--seed', type=int, default=42,
+                        help='Random seed for best-effort reproducibility (default: 42)')
 
     args = parser.parse_args()
+
+    # Seed first (before creating any torch modules)
+    seed_everything(args.seed)
 
     print("=" * 60)
     print("🎮 Connect 4 AI Training - Self-Play DQN")
