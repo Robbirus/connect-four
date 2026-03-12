@@ -215,15 +215,15 @@ class Connect4Agent:
         rewards = torch.FloatTensor([exp[2] for exp in batch]).to(self.device)
         dones = torch.FloatTensor([exp[4] for exp in batch]).to(self.device)
 
-        # Get next states (handle None for terminal states)
-        non_final_mask = torch.tensor(
-            [exp[3] is not None for exp in batch],
-            dtype=torch.bool
-        ).to(self.device)
+        # Get next states (handle None for terminal states).
+        non_final_flags = [exp[3] is not None for exp in batch]
+        non_final_mask = torch.tensor(non_final_flags, dtype=torch.bool, device=self.device)
 
-        non_final_next_states = torch.cat(
-            [exp[3] for exp in batch if exp[3] is not None]
-        ).to(self.device) if any(non_final_mask) else None
+        non_final_next_states = None
+        if any(non_final_flags):
+            non_final_next_states = torch.cat(
+                [exp[3] for exp in batch if exp[3] is not None]
+            ).to(self.device)
 
         # Compute current and target Q values.
         self.policy_net.train()

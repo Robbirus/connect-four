@@ -45,6 +45,7 @@ class SelfPlayTrainer:
         self.tracker = Tracker(db_path=db_path) if enable_tracking else None
         self.session_id = None
         self.replay_updates_per_game = max(1, int(replay_updates_per_game))
+        self._replay_started_logged = False
 
         # Statistics
         self.games_played = 0
@@ -221,8 +222,14 @@ class SelfPlayTrainer:
 
         self.recent_rewards.append((reward_p1 + reward_p2) / 2)
 
-        # Run multiple optimization steps per game to increase GPU work.
-        for _ in range(self.replay_updates_per_game):
+        # Ramp optimization steps with replay-buffer fill to avoid sudden stalls.
+        if len(self.agent.memory) < self.agent.batch_size:
+            return
+
+        max_updates_from_buffer = max(1, len(self.agent.memory) // self.agent.batch_size)
+        updates_to_run = min(self.replay_updates_per_game, max_updates_from_buffer)
+
+        for _ in range(updates_to_run):
             loss = self.agent.replay()
             if loss is not None:
                 self.losses.append(loss)
@@ -266,6 +273,15 @@ class SelfPlayTrainer:
         for game_num in range(1, num_games + 1):
             self.play_game(verbose=False)
             self.games_played += 1
+
+            if (not self._replay_started_logged
+                    and len(self.agent.memory) >= self.agent.batch_size):
+                self._replay_started_logged = True
+                print(
+                    f"Replay activated at game {game_num} "
+                    f"(memory={len(self.agent.memory)}, batch_size={self.agent.batch_size}, "
+                    f"max_updates/game={self.replay_updates_per_game})"
+                )
 
             # Record snapshot + print stats periodically
             if game_num % verbose_every == 0:
