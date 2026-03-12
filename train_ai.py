@@ -24,6 +24,14 @@ def main():
                         help='Print stats every N games (default: 100)')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed for best-effort reproducibility (default: 42)')
+    parser.add_argument('--batch-size', type=int, default=256,
+                        help='Replay batch size (default: 256)')
+    parser.add_argument('--replay-updates', type=int, default=4,
+                        help='Gradient updates per completed game (default: 4)')
+    parser.add_argument('--amp', action='store_true',
+                        help='Enable mixed precision training on CUDA')
+    parser.add_argument('--no-tracking', action='store_true',
+                        help='Disable SQLite tracking for faster training')
 
     args = parser.parse_args()
 
@@ -36,10 +44,20 @@ def main():
     print(f"📊 Games to play: {args.games}")
     print(f"💾 Model path: {args.model}")
     print(f"📈 Save every: {args.save_every} games")
+    print(f"🧮 Batch size: {args.batch_size}")
+    print(f"⚙️  Replay updates/game: {args.replay_updates}")
+    print(f"🚀 AMP: {'on' if args.amp else 'off'}")
+    print(f"🗃️  DB tracking: {'off' if args.no_tracking else 'on'}")
     print("=" * 60)
     print()
 
-    trainer = SelfPlayTrainer(model_path=args.model)
+    trainer = SelfPlayTrainer(
+        model_path=args.model,
+        batch_size=args.batch_size,
+        replay_updates_per_game=args.replay_updates,
+        use_amp=args.amp,
+        enable_tracking=not args.no_tracking,
+    )
     trainer.train(
         num_games=args.games,
         save_every=args.save_every,

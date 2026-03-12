@@ -25,7 +25,7 @@ class Connect4Agent:
     - Position evaluation for reward shaping
     """
 
-    def __init__(self, model_path=None, device=None):
+    def __init__(self, model_path=None, device=None, batch_size=None, use_amp=None):
         """
         Initialize the agent.
 
@@ -35,6 +35,12 @@ class Connect4Agent:
         """
         self.device = device or torch.device(
             "cuda" if torch.cuda.is_available() else "cpu")
+        self.is_cuda = self.device.type == "cuda"
+
+        if self.is_cuda:
+            # Improve matmul throughput on modern NVIDIA GPUs.
+            torch.set_float32_matmul_precision("high")
+            torch.backends.cudnn.benchmark = True
 
         # Main network and target network
         self.policy_net = Connect4Network().to(self.device)
@@ -44,13 +50,17 @@ class Connect4Agent:
         self.memory = deque(maxlen=100000)
 
         # Training parameters
-        self.batch_size = 64
+        self.batch_size = batch_size if batch_size is not None else (
+            256 if self.is_cuda else 64
+        )
         self.gamma = 0.99  # Discount factor
         self.epsilon = 1.0  # Exploration rate
         self.epsilon_min = 0.05
         self.epsilon_decay = 0.9995
         self.learning_rate = 0.001
         self.target_update_freq = 1000
+        self.use_amp = self.is_cuda if use_amp is None else (use_amp and self.is_cuda)
+        self.grad_scaler = torch.amp.GradScaler("cuda", enabled=self.use_amp)
 
         # Optimizer (must be created before load)
         self.optimizer = torch.optim.Adam(
@@ -215,29 +225,28 @@ class Connect4Agent:
             [exp[3] for exp in batch if exp[3] is not None]
         ).to(self.device) if any(non_final_mask) else None
 
-        # Compute current Q values
+        # Compute current and target Q values.
         self.policy_net.train()
-        current_q = self.policy_net(states).gather(1, actions.unsqueeze(1))
+        with torch.amp.autocast(device_type="cuda", enabled=self.use_amp):
+            current_q = self.policy_net(states).gather(1, actions.unsqueeze(1))
 
-        # Compute target Q values
-        next_q = torch.zeros(self.batch_size).to(self.device)
-        if non_final_next_states is not None \
-           and len(non_final_next_states) > 0:
-            with torch.no_grad():
-                # Use negative of opponent's max Q (zero-sum game)
-                next_q[non_final_mask] = - \
-                    self.target_net(non_final_next_states).max(1)[0]
+            next_q = torch.zeros(self.batch_size, device=self.device)
+            if non_final_next_states is not None and len(non_final_next_states) > 0:
+                with torch.no_grad():
+                    # Use negative of opponent's max Q (zero-sum game).
+                    next_state_values = -self.target_net(non_final_next_states).max(1)[0]
+                    next_q[non_final_mask] = next_state_values.to(next_q.dtype)
 
-        target_q = rewards + (self.gamma * next_q * (1 - dones))
+            target_q = rewards + (self.gamma * next_q * (1 - dones))
+            loss = F.smooth_l1_loss(current_q.squeeze(), target_q)
 
-        # Compute loss and update
-        loss = F.smooth_l1_loss(current_q.squeeze(), target_q)
-
-        self.optimizer.zero_grad()
-        loss.backward()
-        # Gradient clipping for stability
+        self.optimizer.zero_grad(set_to_none=True)
+        self.grad_scaler.scale(loss).backward()
+        self.grad_scaler.unscale_(self.optimizer)
+        # Gradient clipping for stability.
         torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), 1.0)
-        self.optimizer.step()
+        self.grad_scaler.step(self.optimizer)
+        self.grad_scaler.update()
 
         # Update target network periodically
         self.steps += 1

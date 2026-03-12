@@ -20,7 +20,15 @@ class SelfPlayTrainer:
     and losing positions to improve its strategy.
     """
 
-    def __init__(self, model_path=None, db_path=None):
+    def __init__(
+        self,
+        model_path=None,
+        db_path=None,
+        batch_size=None,
+        replay_updates_per_game=4,
+        use_amp=None,
+        enable_tracking=True,
+    ):
         """
         Initialize the trainer.
 
@@ -28,10 +36,15 @@ class SelfPlayTrainer:
             model_path: Path to load/save the model
             db_path: Path to the SQLite database (default: games.db)
         """
-        self.agent = Connect4Agent(model_path=model_path)
+        self.agent = Connect4Agent(
+            model_path=model_path,
+            batch_size=batch_size,
+            use_amp=use_amp,
+        )
         self.model_path = model_path or "connect4_dqn.pth"
-        self.tracker = Tracker(db_path=db_path)
+        self.tracker = Tracker(db_path=db_path) if enable_tracking else None
         self.session_id = None
+        self.replay_updates_per_game = max(1, int(replay_updates_per_game))
 
         # Statistics
         self.games_played = 0
@@ -58,8 +71,10 @@ class SelfPlayTrainer:
         game_history = []  # Store (board_state, player, action, move_meta)
 
         # Track game in DB
-        game_id = self.tracker.start_game(
-            session_id=self.session_id, game_type="self_play")
+        game_id = None
+        if self.tracker is not None:
+            game_id = self.tracker.start_game(
+                session_id=self.session_id, game_type="self_play")
 
         while True:
             # Get valid moves
@@ -177,13 +192,14 @@ class SelfPlayTrainer:
                 reward_p2 += reward
 
             # Record move to DB
-            self.tracker.record_move(
-                game_id, move_index=i, player_id=player, column=action,
-                reward=reward,
-                chosen_q_value=move_meta.get("chosen_q"),
-                best_q_value=move_meta.get("best_q"),
-                was_exploration=move_meta.get("was_exploration", False),
-            )
+            if self.tracker is not None:
+                self.tracker.record_move(
+                    game_id, move_index=i, player_id=player, column=action,
+                    reward=reward,
+                    chosen_q_value=move_meta.get("chosen_q"),
+                    best_q_value=move_meta.get("best_q"),
+                    was_exploration=move_meta.get("was_exploration", False),
+                )
 
             # Get next state
             if i + 1 < len(game_history):
@@ -198,16 +214,18 @@ class SelfPlayTrainer:
                                 next_state, done, player)
 
         # Finalize game in DB
-        self.tracker.end_game(
-            game_id, winner=winner, num_moves=move_count,
-            reward_p1=reward_p1, reward_p2=reward_p2)
+        if self.tracker is not None:
+            self.tracker.end_game(
+                game_id, winner=winner, num_moves=move_count,
+                reward_p1=reward_p1, reward_p2=reward_p2)
 
         self.recent_rewards.append((reward_p1 + reward_p2) / 2)
 
-        # Train on batch
-        loss = self.agent.replay()
-        if loss is not None:
-            self.losses.append(loss)
+        # Run multiple optimization steps per game to increase GPU work.
+        for _ in range(self.replay_updates_per_game):
+            loss = self.agent.replay()
+            if loss is not None:
+                self.losses.append(loss)
 
     def train(self, num_games=10000, save_every=1000, verbose_every=100):
         """
@@ -220,21 +238,28 @@ class SelfPlayTrainer:
         """
         print(f"Starting training for {num_games} games...")
         print(f"Device: {self.agent.device}")
+        print(f"Batch size: {self.agent.batch_size}")
+        print(f"Replay updates/game: {self.replay_updates_per_game}")
+        print(f"AMP enabled: {self.agent.use_amp}")
+        print(f"DB tracking: {'on' if self.tracker is not None else 'off'}")
         print("-" * 50)
 
         # Start tracking session
-        self.session_id = self.tracker.start_session(
-            hyperparameters={
-                "lr": self.agent.learning_rate,
-                "gamma": self.agent.gamma,
-                "batch_size": self.agent.batch_size,
-                "epsilon_start": self.agent.epsilon,
-                "epsilon_min": self.agent.epsilon_min,
-                "epsilon_decay": self.agent.epsilon_decay,
-                "seed": os.environ["PYTHONHASHSEED"],
-                "seed_mode": "best-effort"
-            }
-        )
+        if self.tracker is not None:
+            self.session_id = self.tracker.start_session(
+                hyperparameters={
+                    "lr": self.agent.learning_rate,
+                    "gamma": self.agent.gamma,
+                    "batch_size": self.agent.batch_size,
+                    "epsilon_start": self.agent.epsilon,
+                    "epsilon_min": self.agent.epsilon_min,
+                    "epsilon_decay": self.agent.epsilon_decay,
+                    "replay_updates_per_game": self.replay_updates_per_game,
+                    "use_amp": self.agent.use_amp,
+                    "seed": os.environ.get("PYTHONHASHSEED", "unknown"),
+                    "seed_mode": "best-effort"
+                }
+            )
 
         start_time = time.time()
 
@@ -253,7 +278,8 @@ class SelfPlayTrainer:
 
         # Final save
         self.agent.save(self.model_path)
-        self.tracker.end_session(self.session_id, num_games=num_games)
+        if self.tracker is not None and self.session_id is not None:
+            self.tracker.end_session(self.session_id, num_games=num_games)
         print("\nTraining complete!")
         self._print_stats(num_games, start_time)
 
